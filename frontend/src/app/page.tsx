@@ -1,0 +1,363 @@
+"use client";
+
+import { useState } from "react";
+import type { CaptionResult, CaptionRequest } from "@/types";
+import { TARGET_BACKENDS, TARGET_STYLES, TARGET_CATEGORIES } from "@/types";
+import { ImagePreview } from "@/components/ImagePreview";
+import { CaptionVariants } from "@/components/CaptionVariants";
+import { RawOutputs } from "@/components/RawOutputs";
+import { AutoRemoved } from "@/components/AutoRemoved";
+import { ExportButtons } from "@/components/ExportButtons";
+import { ParamInfo } from "@/components/ParamInfo";
+
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export default function Home() {
+  const [imageUrl, setImageUrl] = useState("");
+  const [targetBackend, setTargetBackend] = useState("sdxl");
+  const [targetStyle, setTargetStyle] = useState("photo");
+  const [targetCategory, setTargetCategory] = useState("identity");
+  const [proseEnrichment, setProseEnrichment] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<CaptionResult | null>(null);
+  const [analyzedUrl, setAnalyzedUrl] = useState("");
+
+  const selectedBackend = TARGET_BACKENDS.find(
+    (b) => b.value === targetBackend
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!imageUrl.trim()) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const body: CaptionRequest = {
+        image_url: imageUrl.trim(),
+        target_style: targetStyle,
+        target_category: targetCategory,
+        target_backend: targetBackend,
+        prose_enrichment: proseEnrichment,
+      };
+
+      const resp = await fetch(`${API_URL}/caption/url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        throw new Error(
+          detail?.detail ?? `Server error: ${resp.status}`
+        );
+      }
+
+      const data: CaptionResult = await resp.json();
+      setResult(data);
+      setAnalyzedUrl(imageUrl.trim());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      {/* Header */}
+      <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center">
+            <span className="text-accent-purple text-sm font-bold">A</span>
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold text-foreground">
+              Argus Lens
+            </h1>
+            <p className="text-xs text-muted">
+              Structured image captioning for training &amp; generation
+            </p>
+          </div>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-8">
+        {/* Input form */}
+        <form onSubmit={handleSubmit} className="mb-8">
+          {/* URL input row */}
+          <div className="flex flex-col sm:flex-row gap-3 mb-6">
+            <input
+              type="url"
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              placeholder="Paste image URL (https://...)"
+              required
+              className="flex-1 px-4 py-3 rounded-lg bg-surface border border-border text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent-purple/50 focus:border-accent-purple/50 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={loading || !imageUrl.trim()}
+              className="px-6 py-3 rounded-lg bg-accent-purple text-white font-medium text-sm hover:bg-accent-purple/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap"
+            >
+              {loading ? (
+                <span className="inline-flex items-center gap-2">
+                  <svg
+                    className="animate-spin h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                    />
+                  </svg>
+                  Analyzing...
+                </span>
+              ) : (
+                "Analyze"
+              )}
+            </button>
+          </div>
+
+          {/* Parameters — single row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Target Style */}
+            <ParamInfo
+              label="Target Style"
+              description='Determines how tags are classified and budgeted. "photo" optimises for realism models (natural language tokens). "anime" optimises for booru-tagged models (tag-style tokens, higher density).'
+              example='target_style="photo"'
+            >
+              <div className="flex gap-2">
+                {TARGET_STYLES.map((style) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() => setTargetStyle(style)}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                      targetStyle === style
+                        ? "bg-accent-purple text-white"
+                        : "bg-surface border border-border text-foreground hover:bg-surface-hover"
+                    }`}
+                  >
+                    {style.charAt(0).toUpperCase() + style.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </ParamInfo>
+
+            {/* Target Backend */}
+            <ParamInfo
+              label="Target Backend"
+              description={`The diffusion model architecture that will consume these captions. Each backend has a different CLIP/T5 token budget — exceeding it means wasted tokens the model cannot see. Current: ${selectedBackend?.tokens ?? 60} tokens.`}
+              example='target_backend="sdxl"'
+            >
+              <select
+                value={targetBackend}
+                onChange={(e) => setTargetBackend(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent-purple/50 cursor-pointer"
+              >
+                {TARGET_BACKENDS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label} ({b.tokens} tokens)
+                  </option>
+                ))}
+              </select>
+            </ParamInfo>
+
+            {/* Target Category */}
+            <ParamInfo
+              label="Target Category"
+              description='Controls which caption variant becomes the "final_caption" in the output. For identity-focused LoRA training, keep this as "identity". Change to "wardrobe" or "setting" if fine-tuning for those concepts instead.'
+              example='target_category="identity"'
+            >
+              <select
+                value={targetCategory}
+                onChange={(e) => setTargetCategory(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent-purple/50 cursor-pointer"
+              >
+                {TARGET_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                  </option>
+                ))}
+              </select>
+            </ParamInfo>
+
+            {/* Prose Enrichment */}
+            <ParamInfo
+              label="Prose Enrichment"
+              description="When enabled, novel noun/adjective phrases from prose output (Florence-2) are extracted and appended to the training variant as low-priority tag-style tokens. This adds scene context without displacing core identity or wardrobe tags. Disable for a pure WD14-only training caption."
+              example="prose_enrichment=true"
+            >
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setProseEnrichment(!proseEnrichment)}
+                  className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer ${
+                    proseEnrichment ? "bg-accent-purple" : "bg-border"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                      proseEnrichment ? "translate-x-7" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+                <span className="text-sm text-foreground/80">
+                  {proseEnrichment ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+            </ParamInfo>
+          </div>
+        </form>
+
+        {/* Error */}
+        {error && (
+          <div className="mb-6 p-4 rounded-lg border border-accent-red/30 bg-accent-red/5 text-accent-red text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Results */}
+        {result && (
+          <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
+            {/* Left: image */}
+            <div className="space-y-4">
+              <ImagePreview url={analyzedUrl} />
+              <div className="text-xs text-muted truncate px-1">
+                {analyzedUrl}
+              </div>
+              <div className="px-1 flex items-center gap-2">
+                <span className="text-xs text-muted">Backend:</span>
+                <span className="text-xs text-accent-purple font-medium">
+                  {result.backend_name}
+                </span>
+              </div>
+              <ExportButtons result={result} imageUrl={analyzedUrl} />
+            </div>
+
+            {/* Right: caption data */}
+            <div className="space-y-6 scrollbar-thin">
+              <CaptionVariants result={result} />
+              <RawOutputs result={result} />
+              <AutoRemoved result={result} />
+            </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!result && !loading && !error && (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-surface border border-border flex items-center justify-center mb-4">
+              <svg
+                className="w-8 h-8 text-muted"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"
+                />
+              </svg>
+            </div>
+            <h2 className="text-lg font-medium text-foreground/60 mb-1">
+              Paste an image URL to get started
+            </h2>
+            <p className="text-sm text-muted max-w-md">
+              Argus Lens will generate structured caption variants optimised
+              for LoRA training, with raw model outputs and auto-removed
+              tag analysis.
+            </p>
+
+            {/* Quick reference */}
+            <div className="mt-12 w-full max-w-2xl text-left">
+              <h3 className="text-xs font-semibold tracking-widest text-muted uppercase mb-4 text-center">
+                Pipeline Overview
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <PipelineStep
+                  number={1}
+                  title="Multi-model inference"
+                  description="WD14 produces booru tags; Florence-2 / BLIP-2 generate natural language prose. Both run in parallel via the hybrid pipeline."
+                />
+                <PipelineStep
+                  number={2}
+                  title="Fragment classification"
+                  description="Each tag or phrase is classified into categories: identity, wardrobe, pose, setting, lighting, action."
+                />
+                <PipelineStep
+                  number={3}
+                  title="Redundancy filtering"
+                  description="Prose clauses whose content words overlap with existing tags are removed. Novel clauses are kept for enrichment."
+                />
+                <PipelineStep
+                  number={4}
+                  title="Token-budget assembly"
+                  description="Fragments are assembled into caption variants per category, respecting the target backend's CLIP/T5 token limit."
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-border py-4 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between text-xs text-muted">
+          <span>
+            Powered by{" "}
+            <a
+              href="https://github.com/smk762/argus-lens"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent-purple hover:text-accent-purple/80 transition-colors"
+            >
+              argus-lens
+            </a>
+          </span>
+          <span>MIT License</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function PipelineStep({
+  number,
+  title,
+  description,
+}: {
+  number: number;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-6 h-6 rounded-full bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center text-xs font-bold text-accent-purple">
+          {number}
+        </span>
+        <span className="text-sm font-medium text-foreground">{title}</span>
+      </div>
+      <p className="text-xs text-muted leading-relaxed">{description}</p>
+    </div>
+  );
+}
