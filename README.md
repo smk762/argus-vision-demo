@@ -65,6 +65,10 @@ All captioning parameters are exposed in the UI with inline documentation:
 | `target_category` | `identity` | Which category variant becomes `final_caption` |
 | `prose_enrichment` | `true` | Append novel prose-derived tokens to training variant at lowest priority |
 
+## Related
+
+- [argus-lens](https://github.com/smk762/argus-lens) -- the captioning engine, CLI, and server that powers this demo
+
 ## License
 
 MIT
