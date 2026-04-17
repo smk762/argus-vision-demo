@@ -2,7 +2,13 @@
 
 Single-page web UI demonstrating [argus-lens](https://github.com/smk762/argus-lens) structured image captioning. Paste an image URL, configure pipeline parameters, and inspect training-optimised caption variants, raw model outputs, and auto-removed tag analysis.
 
-Designed as a living onboarding document — every parameter includes an inline explanation of what it does and why.
+Designed as a living onboarding document -- every parameter includes an inline explanation of what it does and why.
+
+![Input form with pipeline parameters](docs/images/spa-form.png)
+
+![Caption variants output](docs/images/spa-output-variants.png)
+
+![Raw model outputs and auto-removed tags](docs/images/spa-output-raw.png)
 
 ## Quick Start
 
@@ -59,7 +65,6 @@ All captioning parameters are exposed in the UI with inline documentation:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `trigger_word` | *(empty)* | Unique token prepended to training captions for identity association |
 | `target_style` | `photo` | `photo` for realism models, `anime` for booru-tagged models |
 | `target_backend` | `sdxl` | Diffusion backend — determines CLIP/T5 token budget (60–200 tokens) |
 | `target_category` | `identity` | Which category variant becomes `final_caption` |
