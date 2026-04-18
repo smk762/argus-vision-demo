@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Argus Lens Demo",
-  description: "Structured image captioning for training and generation",
+  title: "Argus Vision",
+  description: "Structured captioning and dataset curation for LoRA training",
 };
 
 export default function RootLayout({

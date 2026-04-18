@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { CaptionResult, CaptionRequest } from "@/types";
 import { TARGET_BACKENDS, TARGET_STYLES, TARGET_CATEGORIES } from "@/types";
 import { ImagePreview } from "@/components/ImagePreview";
@@ -90,17 +91,35 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 shrink-0 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center">
-              <span className="text-accent-purple text-sm font-bold">A</span>
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold text-foreground">
-                Argus Lens
-              </h1>
-              <p className="text-xs text-muted">
-                Structured image captioning for training &amp; generation
-              </p>
+          <div className="flex items-center gap-4 min-w-0">
+            {/* Nav links */}
+            <nav className="flex items-center gap-1">
+              <Link
+                href="/"
+                className="px-3 py-1.5 rounded-lg text-sm text-foreground bg-surface-hover border border-border"
+              >
+                Caption
+              </Link>
+              <Link
+                href="/curate"
+                className="px-3 py-1.5 rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+              >
+                Curate
+              </Link>
+            </nav>
+
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 shrink-0 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center">
+                <span className="text-accent-purple text-sm font-bold">A</span>
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-lg font-semibold text-foreground">
+                  Argus Lens
+                </h1>
+                <p className="text-xs text-muted">
+                  Structured image captioning for training &amp; generation
+                </p>
+              </div>
             </div>
           </div>
           <div
