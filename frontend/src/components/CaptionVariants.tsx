@@ -3,11 +3,23 @@
 import { useState } from "react";
 import type { CaptionResult } from "@/types";
 
-const VARIANT_STYLES: Record<string, { label: string; border: string; labelColor: string }> = {
+interface VariantStyle {
+  label: string;
+  border: string;
+  labelColor: string;
+  alias?: boolean;
+}
+
+const VARIANT_STYLES: Record<string, VariantStyle> = {
   training: {
     label: "TRAINING",
     border: "border-l-accent-red",
     labelColor: "text-accent-red",
+  },
+  zeroshot: {
+    label: "ZERO-SHOT",
+    border: "border-l-accent-teal",
+    labelColor: "text-accent-teal",
   },
   identity: {
     label: "IDENTITY",
@@ -19,8 +31,13 @@ const VARIANT_STYLES: Record<string, { label: string; border: string; labelColor
     border: "border-l-accent-green",
     labelColor: "text-accent-green",
   },
-  pose_composition: {
-    label: "POSE",
+  camera_framing: {
+    label: "CAMERA / FRAMING",
+    border: "border-l-accent-orange",
+    labelColor: "text-accent-orange",
+  },
+  pose_gaze: {
+    label: "POSE / GAZE",
     border: "border-l-accent-amber",
     labelColor: "text-accent-amber",
   },
@@ -39,14 +56,28 @@ const VARIANT_STYLES: Record<string, { label: string; border: string; labelColor
     border: "border-l-accent-pink",
     labelColor: "text-accent-pink",
   },
-  zeroshot: {
-    label: "ZERO-SHOT",
-    border: "border-l-accent-teal",
-    labelColor: "text-accent-teal",
+  pose_composition: {
+    label: "POSE (legacy alias)",
+    border: "border-l-muted",
+    labelColor: "text-muted",
+    alias: true,
   },
 };
 
-function getVariantStyle(key: string) {
+const VARIANT_ORDER = [
+  "training",
+  "zeroshot",
+  "identity",
+  "wardrobe",
+  "camera_framing",
+  "pose_gaze",
+  "setting",
+  "lighting",
+  "action",
+  "pose_composition",
+];
+
+function getVariantStyle(key: string): VariantStyle {
   return (
     VARIANT_STYLES[key] ?? {
       label: key.toUpperCase().replace(/_/g, " "),
@@ -60,8 +91,13 @@ interface CaptionVariantsProps {
   result: CaptionResult;
 }
 
+function hasOwn(o: object, k: string): boolean {
+  return Object.prototype.hasOwnProperty.call(o, k);
+}
+
 export function CaptionVariants({ result }: CaptionVariantsProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [showAlias, setShowAlias] = useState(false);
 
   const derived = result.final_caption;
   const variants = result.caption_variants;
@@ -71,6 +107,25 @@ export function CaptionVariants({ result }: CaptionVariantsProps) {
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 1500);
   };
+
+  const hideLegacyPoseComposition =
+    hasOwn(variants, "camera_framing") && hasOwn(variants, "pose_gaze");
+
+  const sortedEntries = VARIANT_ORDER.filter((k) => {
+    if (hideLegacyPoseComposition && k === "pose_composition") return false;
+    return k in variants;
+  })
+    .map((k) => [k, variants[k]] as [string, string])
+    .concat(
+      Object.entries(variants).filter(
+        ([k]) =>
+          !VARIANT_ORDER.includes(k) &&
+          !(hideLegacyPoseComposition && k === "pose_composition"),
+      ),
+    );
+
+  const mainEntries = sortedEntries.filter(([k]) => !VARIANT_STYLES[k]?.alias);
+  const aliasEntries = sortedEntries.filter(([k]) => VARIANT_STYLES[k]?.alias);
 
   return (
     <div className="space-y-3">
@@ -97,7 +152,7 @@ export function CaptionVariants({ result }: CaptionVariantsProps) {
       </div>
 
       {/* Category variants */}
-      {Object.entries(variants).map(([key, caption]) => {
+      {mainEntries.map(([key, caption]) => {
         const style = getVariantStyle(key);
         return (
           <div
@@ -105,9 +160,7 @@ export function CaptionVariants({ result }: CaptionVariantsProps) {
             className={`rounded-lg border border-border bg-surface p-4 border-l-4 ${style.border}`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span
-                className={`text-xs font-bold tracking-wider ${style.labelColor}`}
-              >
+              <span className={`text-xs font-bold tracking-wider ${style.labelColor}`}>
                 {style.label}
               </span>
               <button
@@ -123,6 +176,49 @@ export function CaptionVariants({ result }: CaptionVariantsProps) {
           </div>
         );
       })}
+
+      {/* Backward-compat alias — collapsed by default */}
+      {aliasEntries.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAlias((v) => !v)}
+            className="text-xs text-muted hover:text-foreground/60 transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <span>{showAlias ? "▾" : "▸"}</span>
+            {showAlias ? "Hide" : "Show"} legacy aliases ({aliasEntries.length})
+          </button>
+          {showAlias && aliasEntries.map(([key, caption]) => {
+            const style = getVariantStyle(key);
+            return (
+              <div
+                key={key}
+                className={`mt-2 rounded-lg border border-border/50 bg-surface/50 p-4 border-l-4 ${style.border} opacity-60`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-bold tracking-wider ${style.labelColor}`}>
+                      {style.label}
+                    </span>
+                    <span className="text-xs bg-border/60 text-muted px-1.5 py-0.5 rounded">
+                      camera_framing + pose_gaze
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleCopy(caption, key)}
+                    className="text-xs text-accent-teal/60 hover:text-accent-teal/80 transition-colors cursor-pointer"
+                  >
+                    {copiedKey === key ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-sm text-foreground/60 leading-relaxed">
+                  {caption}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
