@@ -15,10 +15,22 @@ Designed as a living onboarding document -- every parameter includes an inline e
 Start the `argus-lens` server first (in a separate terminal):
 
 ```bash
-# In the argus-lens repo
+# In the argus-lens repo (PyPI install)
 pip install argus-lens[server,local]
 argus-lens serve --cors --port 8000
 ```
+
+If you are developing **argus-lens locally**, rebuild the wheel and reinstall into the same environment you use for `serve` (the demo always talks to whatever is running on `NEXT_PUBLIC_API_URL`). Targets use [uv](https://docs.astral.sh/uv/) so installs work on PEP 668 (externally managed) system Pythons:
+
+```bash
+cd ../argus-lens
+uv venv                 # once: create .venv in the repo
+source .venv/bin/activate
+make wheel-reinstall    # uv build + uv pip install --force-reinstall dist/*.whl[server,local,...]
+argus-lens serve --cors --port 8000
+```
+
+Or use an editable install while hacking Python: `uv pip install -e ".[server,local]"` from the argus-lens repo (no wheel step).
 
 Then launch the demo frontend:
 
@@ -58,6 +70,8 @@ The demo is a thin frontend-only wrapper. It sends JSON requests to the `argus-l
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | URL the browser uses to reach the argus-lens API |
 | `FRONTEND_PORT` | `3000` | Host port for the Next.js frontend (Docker only) |
+
+`NEXT_PUBLIC_*` values are inlined when the client bundle is built. After changing the API URL in `.env`, restart `npm run dev` (local) or run `docker compose build --no-cache` before `docker compose up` so the container image picks up the new URL.
 
 ## Parameters
 
