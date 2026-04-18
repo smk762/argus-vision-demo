@@ -31,10 +31,13 @@ export const TARGET_BACKENDS = [
 export const TARGET_STYLES = ["photo", "anime"] as const;
 
 export const TARGET_CATEGORIES = [
-  "identity",
-  "wardrobe",
-  "pose_composition",
-  "setting",
-  "lighting",
-  "action",
+  { value: "identity", label: "Identity" },
+  { value: "wardrobe", label: "Wardrobe" },
+  { value: "camera_framing", label: "Camera / Framing" },
+  { value: "pose_gaze", label: "Pose / Gaze" },
+  { value: "setting", label: "Setting" },
+  { value: "lighting", label: "Lighting" },
+  { value: "action", label: "Action" },
 ] as const;
+
+export type TargetCategory = (typeof TARGET_CATEGORIES)[number]["value"];

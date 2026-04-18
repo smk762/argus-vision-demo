@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CaptionResult, CaptionRequest } from "@/types";
 import { TARGET_BACKENDS, TARGET_STYLES, TARGET_CATEGORIES } from "@/types";
 import { ImagePreview } from "@/components/ImagePreview";
@@ -23,6 +23,24 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CaptionResult | null>(null);
   const [analyzedUrl, setAnalyzedUrl] = useState("");
+  const [lensVersion, setLensVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${API_URL}/version`);
+        if (!resp.ok) throw new Error(String(resp.status));
+        const data: { version?: string } = await resp.json();
+        if (!cancelled) setLensVersion(data.version ?? "unknown");
+      } catch {
+        if (!cancelled) setLensVersion("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedBackend = TARGET_BACKENDS.find(
     (b) => b.value === targetBackend
@@ -71,17 +89,46 @@ export default function Home() {
     <div className="flex flex-col min-h-screen">
       {/* Header */}
       <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center">
-            <span className="text-accent-purple text-sm font-bold">A</span>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 shrink-0 rounded-lg bg-accent-purple/20 border border-accent-purple/40 flex items-center justify-center">
+              <span className="text-accent-purple text-sm font-bold">A</span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-foreground">
+                Argus Lens
+              </h1>
+              <p className="text-xs text-muted">
+                Structured image captioning for training &amp; generation
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">
-              Argus Lens
-            </h1>
-            <p className="text-xs text-muted">
-              Structured image captioning for training &amp; generation
-            </p>
+          <div
+            className="shrink-0 text-right max-w-[14rem] sm:max-w-xs"
+            title={
+              lensVersion && lensVersion.length > 0
+                ? `argus-lens ${lensVersion}`
+                : undefined
+            }
+          >
+            {lensVersion === null ? (
+              <span className="text-[10px] uppercase tracking-wider text-muted/60">
+                …
+              </span>
+            ) : lensVersion === "" ? (
+              <span className="text-[10px] uppercase tracking-wider text-accent-red/80">
+                API unreachable
+              </span>
+            ) : (
+              <div className="flex flex-col items-end gap-0.5">
+                <span className="text-[10px] uppercase tracking-wider text-muted">
+                  argus-lens
+                </span>
+                <span className="text-xs font-mono text-foreground/90 truncate max-w-full">
+                  {lensVersion}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -191,8 +238,8 @@ export default function Home() {
                 className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-accent-purple/50 cursor-pointer"
               >
                 {TARGET_CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                  <option key={cat.value} value={cat.value}>
+                    {cat.label}
                   </option>
                 ))}
               </select>
@@ -301,7 +348,7 @@ export default function Home() {
                 <PipelineStep
                   number={2}
                   title="Fragment classification"
-                  description="Each tag or phrase is classified into categories: identity, wardrobe, pose, setting, lighting, action."
+                  description="Each tag or phrase is classified into: identity, wardrobe, camera/framing, pose/gaze, setting, lighting, action. Camera framing is hard-protected (never dropped); pose/gaze is soft-protected."
                 />
                 <PipelineStep
                   number={3}
