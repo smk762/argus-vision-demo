@@ -1,13 +1,21 @@
+# Frontend only. argus-curator is not defined here — run it separately with volumes whose
+# *container* paths match NEXT_PUBLIC_CURATOR_SOURCE_PATH / OUTPUT_PATH in .env (local mode).
 services:
   frontend:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        NEXT_PUBLIC_CURATOR_URL: ${NEXT_PUBLIC_CURATOR_URL:-http://localhost:8001}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8100}
+        NEXT_PUBLIC_CURATOR_URL: ${NEXT_PUBLIC_CURATOR_URL:-http://localhost:8101}
+        NEXT_PUBLIC_CURATOR_UI_MODE: ${NEXT_PUBLIC_CURATOR_UI_MODE:-demo}
+        NEXT_PUBLIC_CURATOR_SOURCE_PATH: ${NEXT_PUBLIC_CURATOR_SOURCE_PATH:-}
+        NEXT_PUBLIC_CURATOR_OUTPUT_PATH: ${NEXT_PUBLIC_CURATOR_OUTPUT_PATH:-}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-      - NEXT_PUBLIC_CURATOR_URL=${NEXT_PUBLIC_CURATOR_URL:-http://localhost:8001}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8100}
+      - NEXT_PUBLIC_CURATOR_URL=${NEXT_PUBLIC_CURATOR_URL:-http://localhost:8101}
+      - NEXT_PUBLIC_CURATOR_UI_MODE=${NEXT_PUBLIC_CURATOR_UI_MODE:-demo}
+      - NEXT_PUBLIC_CURATOR_SOURCE_PATH=${NEXT_PUBLIC_CURATOR_SOURCE_PATH:-}
+      - NEXT_PUBLIC_CURATOR_OUTPUT_PATH=${NEXT_PUBLIC_CURATOR_OUTPUT_PATH:-}
     restart: unless-stopped
