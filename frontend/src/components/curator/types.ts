@@ -45,6 +45,8 @@ export interface ScanSummary {
   reject_reasons: Record<string, number>;
   selected_names: string[];
   results: ImageResult[];
+  /** Present when the scan ran against an ephemeral browser-upload session on the API. */
+  session_id?: string;
 }
 
 export interface PresetDescription {

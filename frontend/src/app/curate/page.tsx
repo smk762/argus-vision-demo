@@ -1,24 +1,89 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ScanConfigPanel } from "@/components/curator/ScanConfigPanel";
 import { ScanSummaryPanel } from "@/components/curator/ScanSummaryPanel";
 import { ImageResultsGrid } from "@/components/curator/ImageResultsGrid";
 import { defaultConfig, type ScanConfig, type ScanSummary } from "@/components/curator/types";
+import {
+  CURATOR_UI_MODE,
+  LOCAL_OUTPUT_PATH,
+  LOCAL_SOURCE_PATH,
+  type CuratorUiMode,
+} from "@/lib/curatorEnv";
 
 const CURATOR_URL =
-  process.env.NEXT_PUBLIC_CURATOR_URL ?? "http://localhost:8001";
+  process.env.NEXT_PUBLIC_CURATOR_URL ?? "http://localhost:8101";
+
+const isLocalMode = CURATOR_UI_MODE === "local";
+
+type UploadPick = "none" | "folder" | "zip";
+
+function buildScanJson(config: ScanConfig): Record<string, unknown> {
+  return {
+    objective: config.objective,
+    target_style: config.target_style,
+    apply_preset: config.apply_preset,
+    filters: config.filters,
+    duplicates: config.duplicates,
+    embeddings: {
+      ...config.embeddings,
+      clip_model: "openai/clip-vit-large-patch14",
+      dino_model: "facebook/dinov2-base",
+      device: "auto",
+    },
+    detectors: {
+      ...config.detectors,
+      yolo_model: "yolov8n.pt",
+      mtcnn_confidence: 0.9,
+      batch_size: config.embeddings.batch_size,
+      device: "auto",
+    },
+    max_workers: 4,
+    selection: {
+      ...config.selection,
+      n_clusters: null,
+      caption_tags: null,
+    },
+  };
+}
 
 export default function CuratePage() {
   const [config, setConfig] = useState<ScanConfig>(defaultConfig());
-  const [folderPath, setFolderPath] = useState("");
-  const [outputPath, setOutputPath] = useState("");
+  const [uploadPick, setUploadPick] = useState<UploadPick>("none");
+  const [folderPath, setFolderPath] = useState(
+    () => (isLocalMode ? LOCAL_SOURCE_PATH : ""),
+  );
+  const [outputPath, setOutputPath] = useState(
+    () => (isLocalMode ? LOCAL_OUTPUT_PATH : ""),
+  );
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ScanSummary | null>(null);
   const [curatorVersion, setCuratorVersion] = useState<string | null>(null);
+  const [fileInputNonce, setFileInputNonce] = useState(0);
+
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
+  const resetUploadInputs = useCallback(() => {
+    setUploadPick("none");
+    setFileInputNonce((n) => n + 1);
+    if (folderInputRef.current) folderInputRef.current.value = "";
+    if (zipInputRef.current) zipInputRef.current.value = "";
+  }, []);
+
+  const destroySessionQuiet = useCallback(async (id: string | null) => {
+    if (!id) return;
+    try {
+      await fetch(`${CURATOR_URL}/sessions/${id}`, { method: "DELETE" });
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,38 +100,43 @@ export default function CuratePage() {
     return () => { cancelled = true; };
   }, []);
 
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onFolderPickChange = () => {
+    const el = folderInputRef.current;
+    if (!el?.files?.length) {
+      setUploadPick("none");
+      return;
+    }
+    setUploadPick("folder");
+    if (zipInputRef.current) zipInputRef.current.value = "";
+  };
+
+  const onZipPickChange = () => {
+    const el = zipInputRef.current;
+    if (!el?.files?.length) {
+      setUploadPick("none");
+      return;
+    }
+    setUploadPick("zip");
+    if (folderInputRef.current) folderInputRef.current.value = "";
+  };
+
+  const runLocalScan = async () => {
     if (!folderPath.trim()) return;
-
     setLoading(true);
-    setError(null);
-    setSummary(null);
-
     try {
       const body = {
         folder: folderPath.trim(),
-        objective: config.objective,
-        target_style: config.target_style,
-        apply_preset: config.apply_preset,
-        filters: config.filters,
-        duplicates: config.duplicates,
-        embeddings: config.embeddings,
-        detectors: config.detectors,
-        selection: config.selection,
+        ...buildScanJson(config),
       };
-
       const resp = await fetch(`${CURATOR_URL}/scan/folder`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-
       if (!resp.ok) {
         const detail = await resp.json().catch(() => null);
         throw new Error(detail?.detail ?? `Server error: ${resp.status}`);
       }
-
       const data: ScanSummary = await resp.json();
       setSummary(data);
     } catch (err) {
@@ -76,17 +146,153 @@ export default function CuratePage() {
     }
   };
 
+  const handleScan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSummary(null);
+    setSessionId(null);
+
+    if (isLocalMode) {
+      await runLocalScan();
+      return;
+    }
+
+    const folderEl = folderInputRef.current;
+    const zipEl = zipInputRef.current;
+    const folderFiles = folderEl?.files?.length ? Array.from(folderEl.files) : [];
+    const zipFile = zipEl?.files?.[0] ?? null;
+
+    if (uploadPick === "folder" && folderFiles.length === 0) {
+      setError("Choose an image folder first.");
+      return;
+    }
+    if (uploadPick === "zip" && !zipFile) {
+      setError("Choose a .zip file first.");
+      return;
+    }
+    if (uploadPick === "none") {
+      setError("Choose a folder of images or a .zip archive.");
+      return;
+    }
+
+    setLoading(true);
+    let sid: string | null = null;
+    try {
+      const cr = await fetch(`${CURATOR_URL}/sessions`, { method: "POST" });
+      if (!cr.ok) {
+        const detail = await cr.json().catch(() => null);
+        throw new Error(detail?.detail ?? `Could not start session (${cr.status}).`);
+      }
+      const { session_id } = (await cr.json()) as { session_id: string };
+      sid = session_id;
+
+      if (uploadPick === "zip" && zipFile) {
+        const fd = new FormData();
+        fd.append("archive", zipFile, zipFile.name);
+        const up = await fetch(`${CURATOR_URL}/sessions/${sid}/upload-zip`, {
+          method: "POST",
+          body: fd,
+        });
+        if (!up.ok) {
+          const detail = await up.json().catch(() => null);
+          throw new Error(detail?.detail ?? `Upload failed (${up.status}).`);
+        }
+      } else {
+        const fd = new FormData();
+        for (const f of folderFiles) {
+          const rel =
+            (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+          fd.append("files", f, rel.replace(/\\/g, "/"));
+        }
+        const up = await fetch(`${CURATOR_URL}/sessions/${sid}/upload`, {
+          method: "POST",
+          body: fd,
+        });
+        if (!up.ok) {
+          const detail = await up.json().catch(() => null);
+          throw new Error(detail?.detail ?? `Upload failed (${up.status}).`);
+        }
+      }
+
+      const scanBody = buildScanJson(config);
+      const resp = await fetch(`${CURATOR_URL}/sessions/${sid}/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scanBody),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        throw new Error(detail?.detail ?? `Scan failed (${resp.status}).`);
+      }
+      const data: ScanSummary = await resp.json();
+      setSummary(data);
+      setSessionId(data.session_id ?? sid);
+    } catch (err) {
+      await destroySessionQuiet(sid);
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDiscardSession = async () => {
+    await destroySessionQuiet(sessionId);
+    setSessionId(null);
+    setSummary(null);
+    setError(null);
+    resetUploadInputs();
+  };
+
+  const handleDownloadZip = async () => {
+    if (!summary || !sessionId || summary.selected_names.length === 0) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const resp = await fetch(`${CURATOR_URL}/sessions/${sessionId}/export-zip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selected_names: summary.selected_names }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        throw new Error(detail?.detail ?? `Export failed (${resp.status}).`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "curated-subset.zip";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      await destroySessionQuiet(sessionId);
+      setSessionId(null);
+      setSummary(null);
+      resetUploadInputs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleExport = async (mode: "copy" | "move") => {
     if (!summary || !outputPath.trim()) return;
+
+    const selectedRows = summary.results.filter((r) => r.selected);
+    if (selectedRows.length === 0) return;
 
     setExporting(true);
     setError(null);
 
     try {
       const body = {
-        source_folder: folderPath.trim(),
-        output_folder: outputPath.trim(),
-        selected_names: summary.selected_names,
+        sources: selectedRows.map((r) => r.source),
+        dest_names: selectedRows.map((r) => r.name),
+        target_folder: outputPath.trim(),
       };
 
       const resp = await fetch(`${CURATOR_URL}/export/${mode}`, {
@@ -100,9 +306,9 @@ export default function CuratePage() {
         throw new Error(detail?.detail ?? `Export error: ${resp.status}`);
       }
 
-      const data: { exported: number; output_folder: string } = await resp.json();
-      setError(null);
-      alert(`Exported ${data.exported} images to ${data.output_folder}`);
+      const data: { copied?: number; moved?: number; target_folder: string } = await resp.json();
+      const n = data.copied ?? data.moved ?? 0;
+      alert(`${mode === "copy" ? "Copied" : "Moved"} ${n} images to ${data.target_folder}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -111,14 +317,19 @@ export default function CuratePage() {
   };
 
   const selectedCount = summary?.selected ?? 0;
+  const canScanUpload =
+    uploadPick === "folder"
+      ? Boolean(folderInputRef.current?.files?.length)
+      : uploadPick === "zip"
+        ? Boolean(zipInputRef.current?.files?.length)
+        : false;
+  const canScanLocal = folderPath.trim().length > 0;
 
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Header */}
       <header className="border-b border-border bg-surface/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 min-w-0">
-            {/* Nav links */}
             <nav className="flex items-center gap-1">
               <Link
                 href="/"
@@ -145,8 +356,21 @@ export default function CuratePage() {
             </div>
           </div>
 
-          {/* Version badge */}
-          <div className="shrink-0 text-right">
+          <div className="shrink-0 flex flex-col items-end gap-1">
+            <span
+              className={`text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border ${
+                isLocalMode
+                  ? "border-accent-purple/40 text-accent-purple bg-accent-purple/10"
+                  : "border-accent-teal/40 text-accent-teal bg-accent-teal/10"
+              }`}
+              title={
+                isLocalMode
+                  ? "NEXT_PUBLIC_CURATOR_UI_MODE=local — paths are read on the curator host (e.g. Docker volumes)."
+                  : "NEXT_PUBLIC_CURATOR_UI_MODE=demo (default) — browser upload to ephemeral server session."
+              }
+            >
+              {isLocalMode ? "Local paths" : "Live demo"}
+            </span>
             {curatorVersion === null ? (
               <span className="text-[10px] uppercase tracking-wider text-muted/60">…</span>
             ) : curatorVersion === "" ? (
@@ -163,42 +387,122 @@ export default function CuratePage() {
         </div>
       </header>
 
-      {/* Main layout */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
-          {/* Left: config panel */}
           <aside className="space-y-4">
             <form onSubmit={handleScan} className="space-y-4">
-              {/* Folder input */}
               <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted">
-                  Image Folder
-                </label>
-                <input
-                  type="text"
-                  value={folderPath}
-                  onChange={(e) => setFolderPath(e.target.value)}
-                  placeholder="/path/to/images"
-                  required
-                  className="w-full px-3 py-2.5 rounded-lg bg-background border border-border text-foreground placeholder:text-muted text-sm focus:outline-none focus:ring-2 focus:ring-accent-teal/50 focus:border-accent-teal/50"
-                />
-                <button
-                  type="submit"
-                  disabled={loading || !folderPath.trim()}
-                  className="w-full px-4 py-2.5 rounded-lg bg-accent-teal text-black font-semibold text-sm hover:bg-accent-teal/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  {loading ? (
-                    <span className="inline-flex items-center justify-center gap-2">
-                      <Spinner />
-                      Scanning…
-                    </span>
-                  ) : (
-                    "Scan Folder"
-                  )}
-                </button>
+                <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                  Image source
+                </span>
+                {isLocalMode ? (
+                  <>
+                    <p className="text-[11px] text-muted leading-relaxed">
+                      Paths are sent to the curator API as JSON; they must exist on the host running
+                      argus-curator (for Docker, mount volumes and set{" "}
+                      <span className="font-mono text-foreground/80">NEXT_PUBLIC_CURATOR_*</span>{" "}
+                      at <strong className="text-foreground/90">build</strong> time).
+                    </p>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      Source directory
+                    </label>
+                    <input
+                      type="text"
+                      value={folderPath}
+                      onChange={(e) => setFolderPath(e.target.value)}
+                      placeholder="/data/images"
+                      required
+                      className="w-full px-3 py-2.5 rounded-lg bg-background border border-border text-foreground placeholder:text-muted text-sm focus:outline-none focus:ring-2 focus:ring-accent-teal/50 focus:border-accent-teal/50"
+                    />
+                    <label className="block text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      Export directory
+                    </label>
+                    <input
+                      type="text"
+                      value={outputPath}
+                      onChange={(e) => setOutputPath(e.target.value)}
+                      placeholder="/data/out"
+                      className="w-full px-3 py-2.5 rounded-lg bg-background border border-border text-foreground placeholder:text-muted text-sm focus:outline-none focus:ring-2 focus:ring-accent-green/50 focus:border-accent-green/50"
+                    />
+                    <button
+                      type="submit"
+                      disabled={loading || !canScanLocal}
+                      className="w-full px-4 py-2.5 rounded-lg bg-accent-teal text-black font-semibold text-sm hover:bg-accent-teal/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {loading ? (
+                        <span className="inline-flex items-center justify-center gap-2">
+                          <Spinner />
+                          Scanning…
+                        </span>
+                      ) : (
+                        "Scan folder"
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-muted leading-relaxed">
+                      Upload a folder or zip for the public demo. Files live in a temp directory on
+                      the API host until you download a zip or discard the session.
+                    </p>
+                    <input
+                      key={`f-${fileInputNonce}`}
+                      ref={folderInputRef}
+                      type="file"
+                      className="hidden"
+                      multiple
+                      onChange={onFolderPickChange}
+                      {...{ webkitdirectory: "true" } as React.InputHTMLAttributes<HTMLInputElement>}
+                    />
+                    <input
+                      key={`z-${fileInputNonce}`}
+                      ref={zipInputRef}
+                      type="file"
+                      accept=".zip,application/zip"
+                      className="hidden"
+                      onChange={onZipPickChange}
+                    />
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => folderInputRef.current?.click()}
+                        className="w-full px-3 py-2.5 rounded-lg border border-accent-teal/50 bg-accent-teal/10 text-accent-teal text-sm font-medium hover:bg-accent-teal/20 transition-colors cursor-pointer"
+                      >
+                        Choose image folder…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => zipInputRef.current?.click()}
+                        className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-foreground text-sm font-medium hover:bg-surface-hover transition-colors cursor-pointer"
+                      >
+                        Choose .zip archive…
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-muted">
+                      {uploadPick === "folder" && folderInputRef.current?.files?.length
+                        ? `${folderInputRef.current.files.length} files selected`
+                        : uploadPick === "zip" && zipInputRef.current?.files?.[0]
+                          ? `Zip: ${zipInputRef.current.files[0].name}`
+                          : "No files selected yet."}
+                    </p>
+                    <button
+                      type="submit"
+                      disabled={loading || !canScanUpload}
+                      className="w-full px-4 py-2.5 rounded-lg bg-accent-teal text-black font-semibold text-sm hover:bg-accent-teal/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {loading ? (
+                        <span className="inline-flex items-center justify-center gap-2">
+                          <Spinner />
+                          Scanning…
+                        </span>
+                      ) : (
+                        "Scan"
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
 
-              {/* Config */}
               <div className="rounded-xl border border-border bg-surface p-4">
                 <ScanConfigPanel
                   config={config}
@@ -208,24 +512,57 @@ export default function CuratePage() {
               </div>
             </form>
 
-            {/* Export panel */}
-            {summary && selectedCount > 0 && (
+            {!isLocalMode && summary && sessionId && (
+              <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
+                {selectedCount > 0 ? (
+                  <>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                      Download subset
+                    </label>
+                    <p className="text-[11px] text-muted leading-relaxed">
+                      Saves only the selected images as{" "}
+                      <span className="font-mono text-foreground/80">curated-subset.zip</span>, then
+                      deletes the temporary session on the server.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={exporting}
+                      onClick={() => void handleDownloadZip()}
+                      className="w-full px-4 py-2.5 rounded-lg bg-accent-green/20 border border-accent-green/40 text-accent-green text-sm font-semibold hover:bg-accent-green/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      {exporting ? <Spinner /> : "Download zip & clear session"}
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted leading-relaxed">
+                    No images were selected for this run. Tweak filters or try a different source set,
+                    then discard the upload when you are done.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  disabled={exporting}
+                  onClick={() => void handleDiscardSession()}
+                  className="w-full px-3 py-2 rounded-lg border border-border text-muted text-xs font-medium hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                >
+                  Discard session (delete server copy)
+                </button>
+              </div>
+            )}
+
+            {isLocalMode && summary && selectedCount > 0 && (
               <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
                 <label className="block text-xs font-semibold uppercase tracking-wider text-muted">
                   Export {selectedCount} selected
                 </label>
-                <input
-                  type="text"
-                  value={outputPath}
-                  onChange={(e) => setOutputPath(e.target.value)}
-                  placeholder="/path/to/training_subset"
-                  className="w-full px-3 py-2.5 rounded-lg bg-background border border-border text-foreground placeholder:text-muted text-sm focus:outline-none focus:ring-2 focus:ring-accent-green/50 focus:border-accent-green/50"
-                />
+                <p className="text-[11px] text-muted leading-relaxed">
+                  Target folder on the curator host (defaults from env; edit above if needed).
+                </p>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     disabled={exporting || !outputPath.trim()}
-                    onClick={() => handleExport("copy")}
+                    onClick={() => void handleExport("copy")}
                     className="flex-1 px-3 py-2 rounded-lg bg-accent-green/20 border border-accent-green/40 text-accent-green text-sm font-medium hover:bg-accent-green/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                   >
                     {exporting ? <Spinner /> : "Copy"}
@@ -233,7 +570,7 @@ export default function CuratePage() {
                   <button
                     type="button"
                     disabled={exporting || !outputPath.trim()}
-                    onClick={() => handleExport("move")}
+                    onClick={() => void handleExport("move")}
                     className="flex-1 px-3 py-2 rounded-lg bg-accent-amber/20 border border-accent-amber/40 text-accent-amber text-sm font-medium hover:bg-accent-amber/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                   >
                     {exporting ? <Spinner /> : "Move"}
@@ -243,7 +580,6 @@ export default function CuratePage() {
             )}
           </aside>
 
-          {/* Right: results */}
           <div className="space-y-6 min-w-0">
             {error && (
               <div className="p-4 rounded-lg border border-accent-red/30 bg-accent-red/5 text-accent-red text-sm">
@@ -264,7 +600,7 @@ export default function CuratePage() {
             )}
 
             {!summary && !loading && !error && (
-              <EmptyState />
+              <EmptyState uiMode={CURATOR_UI_MODE} />
             )}
 
             {loading && (
@@ -277,7 +613,6 @@ export default function CuratePage() {
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border py-4 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between text-xs text-muted">
           <span>
@@ -321,7 +656,8 @@ function PipelineStep({ number, title, description }: { number: number; title: s
   );
 }
 
-function EmptyState() {
+function EmptyState({ uiMode }: { uiMode: CuratorUiMode }) {
+  const isLocal = uiMode === "local";
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
       <div className="w-16 h-16 rounded-2xl bg-surface border border-border flex items-center justify-center mb-4">
@@ -330,10 +666,12 @@ function EmptyState() {
         </svg>
       </div>
       <h2 className="text-lg font-medium text-foreground/60 mb-1">
-        Enter a folder path to get started
+        {isLocal ? "Configure paths and scan" : "Upload a folder or zip to get started"}
       </h2>
       <p className="text-sm text-muted max-w-md">
-        Argus Curator will score and rank images, deduplicate near-identical shots, and select an optimal training subset.
+        {isLocal
+          ? "Local mode uses directories on the curator host. Set NEXT_PUBLIC_CURATOR_SOURCE_PATH and NEXT_PUBLIC_CURATOR_OUTPUT_PATH when building the frontend image so they match your Docker volume mounts."
+          : "The live demo uploads into a short-lived server session. Download the optimal subset as a zip when you are done, or discard to delete server-side copies."}
       </p>
 
       <div className="mt-12 w-full max-w-2xl text-left">
